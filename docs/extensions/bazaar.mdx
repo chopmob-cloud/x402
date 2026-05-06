@@ -81,6 +81,12 @@ GET https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources
 GET https://facilitator.payai.network/discovery/resources
 ```
 
+##### AlgoVoi
+```bash
+GET https://api.algovoi.co.uk/discovery/resources
+```
+
+AlgoVoi is a multi-chain facilitator covering Base, Solana, Tempo, Algorand, VOI, Hedera, and Stellar. Each resource's `metadata.compliance` block (when present) advertises sanctions-screening sources, facilitator jurisdiction, and a link to a live `/compliance/attestation` document.
 
 **Note**: The recommended way to use this endpoint is to use the `useFacilitator` hook as described below.
 
