@@ -5,7 +5,7 @@
   "websiteUrl": "https://www.algovoi.co.uk",
   "category": "Facilitators",
   "facilitator": {
-    "baseUrl": "https://cloud.algovoi.co.uk",
+    "baseUrl": "https://api.algovoi.co.uk",
     "networks": [
       "algorand-mainnet",
       "voi-mainnet",
