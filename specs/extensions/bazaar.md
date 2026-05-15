@@ -713,7 +713,93 @@ Corresponding `PaymentRequired` extension fragment:
 
 ### Regulatory: Multi-framework compliance oracle
 
-> _Regulatory worked example in progress - co-author contribution from feedoracle/tooloracle.io (see [issue #2285](https://github.com/x402-foundation/x402/issues/2285))._
+A point-in-time regulatory determination service attesting against named legal frameworks. The service operates under defined jurisdictional reach; its anchor chain is an independent infrastructure choice bounded by `anchor_chains ⊆ ∪(supported chains)` (not by observation history).
+
+**Implementor:** feedoracle / tooloracle.io
+
+```yaml
+extensions.bazaar.category: Compliance
+extensions.bazaar.evidenceType: regulatory
+extensions.bazaar.evidenceShape:
+  determinism: single-call
+  framework:
+    - MiCA
+    - DORA
+    - AMLR
+    - PSD2
+    - PSD3
+    - ISO20022
+    - ISO27001
+    - NIS2
+    - CFTC-5.17(z)
+    - OECD-CRS
+    - FATF-Travel-Rule
+  signedReceipt: true
+  signing_did: did:web:tooloracle.io
+  signature_algorithm: ES256K
+  retention_years: 7
+  anchor_chains:
+    - base
+    - xrpl
+  contributing_chains:
+    - base
+    - polygon
+    - xrpl
+    - arbitrum
+    - avalanche
+    - bsc
+    - ethereum
+    - hedera
+    - solana
+    - stellar
+    - sui
+    - ton
+    - aptos
+  outputs: [ALLOW, WARN, BLOCK]
+  attestation_url: https://tooloracle.io/.well-known/agent.json
+```
+
+Corresponding `PaymentRequired` extension fragment:
+
+```json
+{
+  "extensions": {
+    "bazaar": {
+      "category": "Compliance",
+      "evidenceType": "regulatory",
+      "evidenceShape": {
+        "determinism": "single-call",
+        "framework": ["MiCA", "DORA", "AMLR", "PSD2", "PSD3", "ISO20022", "ISO27001", "NIS2", "CFTC-5.17(z)", "OECD-CRS", "FATF-Travel-Rule"],
+        "signedReceipt": true,
+        "signing_did": "did:web:tooloracle.io",
+        "signature_algorithm": "ES256K",
+        "retention_years": 7,
+        "anchor_chains": ["base", "xrpl"],
+        "contributing_chains": ["base", "polygon", "xrpl", "arbitrum", "avalanche", "bsc", "ethereum", "hedera", "solana", "stellar", "sui", "ton", "aptos"],
+        "outputs": ["ALLOW", "WARN", "BLOCK"],
+        "attestation_url": "https://tooloracle.io/.well-known/agent.json"
+      },
+      "info": { "...": "..." }
+    }
+  }
+}
+```
+
+Note the `anchor_chains ⊆ ∪(supported chains)` constraint is satisfied: `[base, xrpl]` is a strict subset of the 13 contributing chains. A regulatory emitter does not need to observe all contributing chains — the frameworks define the contributing set and the legal jurisdiction defines the scope; the infrastructure choice determines which chains receive anchored receipts.
+
+**Framework coverage summary:**
+
+| Framework | Coverage |
+|---|---|
+| MiCA (EU 2023/1114) | Title III/IV token issuance, Art. 80 record-keeping, Art. 88 supervisory reporting |
+| DORA (EU 2022/2554) | Art. 14 ICT incident classification, 3-year record retention |
+| AMLR (EU 2024/1624) | Art. 22 PEP enhanced CDD, Art. 56 5y/10y retention |
+| PSD2/PSD3 | SCA compliance, TPP authorisation checks |
+| ISO 20022 | UNIFI message validation, sanctions screening |
+| NIS2 (EU 2022/2555) | Art. 21 security measures, Art. 23 incident reporting |
+| CFTC-5.17(z) | US commodity digital asset discrete-decision gate |
+| FATF Travel Rule (Recommendation 16) | VASP counterparty due diligence |
+| OECD CRS | Cross-border reportable account determination |
 
 ---
 
