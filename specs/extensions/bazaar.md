@@ -587,3 +587,128 @@ Facilitators are **not expected** to support v1. If v1 support is desired:
 | `accepts[0].mimeType` | `mimeType` (top-level) |
 
 V1 had no formal schema validation.
+
+---
+
+## Service Category Taxonomy
+
+Resource servers MAY declare a `category` in the bazaar extension to help facilitators and discovery surfaces classify and route compliance-relevant traffic. Categories extend the existing `extensions.bazaar` object with optional taxonomy fields.
+
+### `category` field
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `category` | string | No | Service category. See enumeration below. |
+
+Current defined categories:
+
+| Value | Description |
+|---|---|
+| `"Compliance"` | Services that produce regulatory determinations, behavioral trust signals, or audit evidence about payment activity. |
+
+The category enumeration is **open**: future categories may be added via spec PR without invalidating existing entries. Facilitators MUST treat unrecognised category values as `null` (no category filter applied).
+
+---
+
+## Compliance Category: `evidenceType` and `evidenceShape`
+
+When `category: "Compliance"` is declared, the bazaar extension SHOULD include `evidenceType` and `evidenceShape` fields that describe the evidence the service produces. These fields enable downstream consumers (trust-provider hooks, settlement gates, audit pipelines) to configure themselves from registry metadata alone, without per-emitter knowledge.
+
+### `evidenceType`
+
+| Value | Description |
+|---|---|
+| `"regulatory"` | Point-in-time determination under a named legal framework (MiCA, DORA, AMLR, CFTC, PSD2/3, ISO20022, etc.). Deterministic: the same input produces the same decision within the validity window. |
+| `"behavioral"` | Accumulated signal from observed payment interactions across one or more networks. Non-deterministic: the signal evolves as more interactions are observed. |
+| `"observational"` | Neutral count or measurement (settlement counts, payer diversity, marker emission rate). Produces no ALLOW/BLOCK decision; feeds measurement layers. |
+| `"cryptographic"` | Zero-knowledge or threshold-proof based attestation. |
+
+### `evidenceShape`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `determinism` | string | No | One of `"single-call"` (result is complete per call) or `"accumulating"` (result improves with more observations). |
+| `framework` | array of string | No | Open enum. Named legal or technical frameworks the service attests against (e.g. `["MiCA", "DORA", "AMLR"]`). |
+| `signedReceipt` | boolean | No | Whether the service emits a cryptographically signed receipt per decision. |
+| `signing_did` | string | No | DID of the signing key (e.g. `did:web:tooloracle.io`). Present when `signedReceipt: true`. |
+| `signature_algorithm` | string | No | Signing algorithm (e.g. `ES256K`). Present when `signedReceipt: true`. |
+| `retention_years` | number | No | Minimum receipt retention period in years. Informed by applicable regulation (AMLR Art. 56: 5y min / 10y extended; DORA Art. 14: 3y; MiCA Art. 80: 5y). |
+| `anchor_chains` | array of string | No | Networks where signed receipts are written and independently verifiable. |
+| `contributing_chains` | array of string | No | Networks whose activity the service checks or scores. |
+| `outputs` | array of string | No | Decision values the service may return (e.g. `["ALLOW", "WARN", "BLOCK"]`). |
+| `attestation_url` | string | No | URL of the service's public compliance posture document. |
+
+### Constraint: `anchor_chains` vs `contributing_chains`
+
+The two fields carry different semantics depending on `evidenceType`:
+
+**For `evidenceType: "behavioral"`:** A behavioral accumulator can only sign receipts for traffic it has directly observed. Therefore:
+
+> `anchor_chains ⊆ contributing_chains` is REQUIRED. A behavioral service MUST NOT anchor receipts on a chain that is not in its contributing set.
+
+**For `evidenceType: "regulatory"`:** A regulatory emitter attests based on jurisdictional reach defined by the applicable legal framework, not by its own observation history. The anchor chain is an independent infrastructure choice:
+
+> `anchor_chains ⊆ contributing_chains` is NOT required. A regulatory service MAY anchor on Base while attesting about activity on XRPL, Algorand, or any other network within the framework's scope.
+
+This asymmetry is structural, not incidental: it reflects what each evidence class can legitimately attest about.
+
+---
+
+## Compliance Category: Worked Examples
+
+### Behavioral: Multi-chain payment gateway
+
+A payment facilitator that accumulates AML and behavioral trust signals across multiple chains from observed settlement traffic.
+
+```yaml
+extensions.bazaar.category: Compliance
+extensions.bazaar.evidenceType: behavioral
+extensions.bazaar.evidenceShape:
+  determinism: accumulating
+  signedReceipt: true
+  retention_years: 7
+  anchor_chains: [base, solana, algorand]
+  contributing_chains: [base, solana, algorand, voi, hedera, stellar, tempo, arc]
+  outputs: ["ALLOW", "BLOCK"]
+  attestation_url: https://api.algovoi.co.uk/compliance/attestation
+```
+
+Corresponding `PaymentRequired` extension fragment:
+
+```json
+{
+  "extensions": {
+    "bazaar": {
+      "category": "Compliance",
+      "evidenceType": "behavioral",
+      "evidenceShape": {
+        "determinism": "accumulating",
+        "signedReceipt": true,
+        "retention_years": 7,
+        "anchor_chains": ["base", "solana", "algorand"],
+        "contributing_chains": ["base", "solana", "algorand", "voi", "hedera", "stellar", "tempo", "arc"],
+        "outputs": ["ALLOW", "BLOCK"],
+        "attestation_url": "https://api.algovoi.co.uk/compliance/attestation"
+      },
+      "info": { "...": "..." }
+    }
+  }
+}
+```
+
+### Regulatory: Multi-framework compliance oracle
+
+> _Regulatory worked example in progress - co-author contribution from feedoracle/tooloracle.io (see [issue #2285](https://github.com/x402-foundation/x402/issues/2285))._
+
+---
+
+## Compliance Category: Discovery Filter
+
+Facilitators that implement the optional discovery endpoints (`GET /discovery/resources`, `GET /discovery/search`) SHOULD support filtering by `category` and `evidenceType`:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `category` | string | Filter resources by declared category (e.g. `Compliance`). |
+| `evidenceType` | string | Filter compliance resources by evidence class (`regulatory`, `behavioral`, `observational`, `cryptographic`). |
+
+These parameters are additive: `category=Compliance&evidenceType=behavioral` returns only behavioral compliance services.
