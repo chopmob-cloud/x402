@@ -646,9 +646,9 @@ The two fields carry different semantics depending on `evidenceType`:
 
 > `anchor_chains ⊆ contributing_chains` is REQUIRED. A behavioral service MUST NOT anchor receipts on a chain that is not in its contributing set.
 
-**For `evidenceType: "regulatory"`:** A regulatory emitter attests based on jurisdictional reach defined by the applicable legal framework, not by its own observation history. The anchor chain is an independent infrastructure choice:
+**For `evidenceType: "regulatory"`:** A regulatory emitter attests based on jurisdictional reach defined by the applicable legal framework, not by its own observation history. The anchor chain is an independent infrastructure choice, bounded by the chains the service actually supports:
 
-> `anchor_chains ⊆ contributing_chains` is NOT required. A regulatory service MAY anchor on Base while attesting about activity on XRPL, Algorand, or any other network within the framework's scope.
+> `anchor_chains ⊆ contributing_chains` is NOT required, but `anchor_chains ⊆ ∪(supported chains)` IS required. A regulatory service MAY anchor on Base while attesting about XRPL activity, but may not anchor on a chain it does not support. The legal frameworks define the contributing set; the emitter's infrastructure defines the anchor set.
 
 This asymmetry is structural, not incidental: it reflects what each evidence class can legitimately attest about.
 
