@@ -629,7 +629,7 @@ When `category: "Compliance"` is declared, the bazaar extension SHOULD include `
 |---|---|---|---|
 | `determinism` | string | No | One of `"single-call"` (result is complete per call) or `"accumulating"` (result improves with more observations). |
 | `framework` | array of string | No | Open enum. Named legal or technical frameworks the service attests against (e.g. `["MiCA", "DORA", "AMLR"]`). |
-| `signedReceipt` | boolean | No | Whether the service emits a cryptographically signed receipt per decision. |
+| `signedReceipt` | boolean | No | Whether the service emits a cryptographically signed receipt per decision. When `true`, the signed payload MUST be serialised using JCS (RFC 8785) before signing, ensuring a single verifier implementation can validate receipts across all `evidenceType` classes. |
 | `signing_did` | string | No | DID of the signing key (e.g. `did:web:tooloracle.io`). Present when `signedReceipt: true`. |
 | `signature_algorithm` | string | No | Signing algorithm (e.g. `ES256K`). Present when `signedReceipt: true`. |
 | `retention_years` | number | No | Minimum receipt retention period in years. Informed by applicable regulation (AMLR Art. 56: 5y min / 10y extended; DORA Art. 14: 3y; MiCA Art. 80: 5y). |
@@ -813,3 +813,11 @@ Facilitators that implement the optional discovery endpoints (`GET /discovery/re
 | `evidenceType` | string | Filter compliance resources by evidence class (`regulatory`, `behavioral`, `observational`, `cryptographic`). |
 
 These parameters are additive: `category=Compliance&evidenceType=behavioral` returns only behavioral compliance services.
+
+---
+
+## Settlement Visibility
+
+The fields defined above assume settlements are readable on-chain. Privacy-preserving x402 flows (ZK-shielded transfers, off-chain netting, sealed mempools) interact differently with each `evidenceType` class: the observational class becomes blind, the behavioral class cannot accumulate, and the regulatory class may face verifiability constraints under EU AMLR Art. 22.
+
+A `privacy_class` field (`public-settlement` / `attested-private` / `fully-private`) is being designed to handle this explicitly. See issue [#2327](https://github.com/x402-foundation/x402/issues/2327) for the working group discussion. That field is out of scope for this PR.
