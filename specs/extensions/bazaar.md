@@ -785,21 +785,110 @@ Corresponding `PaymentRequired` extension fragment:
 }
 ```
 
-Note the `anchor_chains ⊆ ∪(supported chains)` constraint is satisfied: `[base, xrpl]` is a strict subset of the 13 contributing chains. A regulatory emitter does not need to observe all contributing chains — the frameworks define the contributing set and the legal jurisdiction defines the scope; the infrastructure choice determines which chains receive anchored receipts.
+Note the `anchor_chains ⊆ ∪(supported chains)` constraint is satisfied: `{base, xrpl}` is a strict subset of the 13 contributing chains. A regulatory emitter does not need to observe all contributing chains — the frameworks define the contributing set and the legal jurisdiction defines the scope; the infrastructure choice determines which chains receive anchored receipts. The signature attests to the *regulatory determination*, not to *traffic observation*; the on-chain settlements on contributing chains are themselves observable by the `observational` class.
 
-**Framework coverage summary:**
+#### Framework sub-shapes
 
-| Framework | Coverage |
-|---|---|
-| MiCA (EU 2023/1114) | Title III/IV token issuance, Art. 80 record-keeping, Art. 88 supervisory reporting |
-| DORA (EU 2022/2554) | Art. 14 ICT incident classification, 3-year record retention |
-| AMLR (EU 2024/1624) | Art. 22 PEP enhanced CDD, Art. 56 5y/10y retention |
-| PSD2/PSD3 | SCA compliance, TPP authorisation checks |
-| ISO 20022 | UNIFI message validation, sanctions screening |
-| NIS2 (EU 2022/2555) | Art. 21 security measures, Art. 23 incident reporting |
-| CFTC-5.17(z) | US commodity digital asset discrete-decision gate |
-| FATF Travel Rule (Recommendation 16) | VASP counterparty due diligence |
-| OECD CRS | Cross-border reportable account determination |
+The `framework` field is an open enum. Each declared framework MAY carry a sub-shape that documents which articles the emitter operationalises. Facilitators MUST treat absent sub-shapes as opaque and MUST NOT reject a registry entry for missing sub-shapes. Below is a representative example (CFTC-5.17(z)) showing the discrete-decision shape:
+
+```yaml
+framework: CFTC-5.17(z)
+rules_covered:
+  - Rule 5.17(z)        # Prohibited transactions by decision-makers
+discrete_decision_supported: true
+outputs: [ALLOW, WARN, BLOCK]
+reference_cases:
+  - Kalshi v. Moran (Apr 22 2026)
+  - Kalshi v. Klein (Apr 22 2026)
+  - CFTC v. Van Dyke (Apr 23 2026)
+```
+
+Sub-shapes for other frameworks follow the same pattern: `articles_covered`, `tools_examples`, `discrete_decision_supported`. See [feedoracle's gist](https://gist.github.com/feedoracle/2e803cdc3acb9dbf515cac4c900508cb) for full sub-shapes across MiCA, DORA, AMLR, PSD2/3, and ISO 20022.
+
+#### TrustQuery → TrustEvaluation roundtrip
+
+The following end-to-end example shows how a `category: "Compliance"` service interacts with the trust-provider hook (PR #2300). The CFTC-5.17(z) case is used because the ALLOW/WARN/BLOCK shape is discrete and easy to validate against the schema.
+
+**TrustQuery (incoming):**
+
+```json
+{
+  "schema": "x402-trust-query-v0.1",
+  "payer": {
+    "agent_id": "did:web:agent-42.example.com",
+    "wallet": "0x..."
+  },
+  "resource": {
+    "url": "https://tooloracle.io/v2/integrity_gate",
+    "method": "POST",
+    "amount": { "value": "20000", "currency": "USDC", "chain": "base" }
+  },
+  "context": {
+    "category": "Compliance",
+    "evidenceType": "regulatory",
+    "framework": "CFTC-5.17(z)",
+    "risk_band": "high"
+  },
+  "requested_at": "2026-05-15T18:00:00Z"
+}
+```
+
+**TrustEvaluation (from regulatory evaluator):**
+
+```json
+{
+  "schema": "x402-trust-evaluation-v0.1",
+  "provider": "PredictionGuard (tooloracle.io)",
+  "decision": "FAIL",
+  "score": 18.9,
+  "evidence_uri": "https://feedoracle.io/predictionguard/receipts/sha256-f3a8b21c...",
+  "reason_code": "RULE_5_17z_CONFLICT",
+  "framework": "CFTC-5.17(z)",
+  "ttl_seconds": 3600,
+  "evaluated_at": "2026-05-15T18:00:01Z"
+}
+```
+
+The `evidence_uri` resolves to a content-hash-anchored JSON object signed under `did:web:feedoracle.io:predictionguard` (ES256K). The `content_hash` is deterministic over the canonical JSON of inputs and outputs, so the receipt is verifiable independent of signing-layer availability. Live endpoint: `https://tooloracle.io/v2/integrity_gate` ($0.02 USDC, Base mainnet). [First on-chain settlement proof](https://basescan.org/tx/0x6314acf04b4db3fac558cc5765333afb19befc283971b048a024f5950499ef3d).
+
+#### Composition with behavioral and observational classes
+
+A composite verdict at the trust-provider hook combines all three classes without per-class coordination overhead — the registry `category` and `evidenceType` tags determine the policy routing:
+
+```
+TrustQuery
+    ├── regulatory  (feedoracle): single-call, framework-bound
+    │       FAIL = deterministic — under STRICT policy, overrides immediately
+    │
+    ├── behavioral  (AlgoVoi):    accumulating, multi-chain
+    │       FAIL = informational — weighted by historical pass rate
+    │
+    └── observational (Agent 402 Tape): aggregating, neutral count
+            No verdict emitted — provides independent conformance check
+            for behavioral anchor_chains ⊆ contributing_chains rule
+```
+
+Under a **STRICT** aggregation policy: any regulatory FAIL aborts settlement immediately. Under a **custom** policy: a regulatory FAIL routes per-framework (e.g. AMLR FAIL surfaces to compliance officer; CFTC-5.17(z) FAIL hard-aborts), while behavioral FAIL is weighted against historical pass rate. The observational class is not a verdict producer.
+
+**Framework coverage (catalog level):**
+
+| Framework | Tools | Key articles | Live endpoint |
+|---|---|---|---|
+| MiCA | 53 (MiCAOracle + ComplianceOracle) | Art. 35, 37, 43, 80, Title III/IV | `/mica`, `/compliance` |
+| DORA | 32 (DORAOracle + TLPTOracle) | Art. 5, 9, 17, 23, 26 | `/dora`, `/tlpt` |
+| AMLR | 12 (AMLOracle) | Art. 16, 22, 44, 56 | `/aml` |
+| PSD2/PSD3 | 12 (PSD2Oracle) | Art. 66, 67, 97, 98 | `/psd2oracle` |
+| ISO 20022 | 12 (ISO20022Oracle) | pacs.008, pacs.009, camt | `/iso20022` |
+| ISO 27001 / NIS2 | 22 (CryptoKeyOracle + CyberShield) | Annex A, NIS2 Art. 21 | `/cryptokey`, `/cybershield` |
+| CFTC-5.17(z) | 41 (PredictionGuard) | Rule 5.17(z) | `/predictionguard` |
+| OECD-CRS / FATF | 13 (OECDOracle) | CRS, Recommendation 16 | `/oecd` |
+| Settlement (TIPS/T2S/SWIFT) | 12 (SettlementOracle) | T2/T2S, SEPA, CLS | `/settlement` |
+| Legal lookup | 28 (LawOracle + EULawOracle) | EUR-Lex, Federal Register, SEC | `/law`, `/eulaw` |
+| XRPL-specific | 31 (XRPLOracle) | RLUSD integrity, AMM, escrow | `/xrpl` |
+| Runtime enforcement | 20 (AgentGuard) | Policy preflight, audit log | `/agentguard` |
+| ZK / cryptographic evidence | 14 (ZKEvidenceOracle) | Merkle commitments, VCs | `/zk` |
+
+**Source and verification:** [GitHub (MIT)](https://github.com/ToolOracle/predictionguard) · [Live MCP endpoint](https://feedoracle.io/predictionguard/mcp) · [Bazaar listing](https://agentic.market/services/tooloracle-io) · [Live x402 endpoint](https://tooloracle.io/v2/integrity_gate)
 
 ---
 
@@ -820,4 +909,4 @@ These parameters are additive: `category=Compliance&evidenceType=behavioral` ret
 
 The fields defined above assume settlements are readable on-chain. Privacy-preserving x402 flows (ZK-shielded transfers, off-chain netting, sealed mempools) interact differently with each `evidenceType` class: the observational class becomes blind, the behavioral class cannot accumulate, and the regulatory class may face verifiability constraints under EU AMLR Art. 22.
 
-A `privacy_class` field (`public-settlement` / `attested-private` / `fully-private`) is being designed to handle this explicitly. See issue [#2327](https://github.com/x402-foundation/x402/issues/2327) for the working group discussion. That field is out of scope for this PR.
+A `privacy_class` field (`public-settlement` / `attested-private` / `fully-private`) is being designed to handle this explicitly. See issue [#2326](https://github.com/x402-foundation/x402/issues/2326) for the working group discussion. That field is out of scope for this PR.
