@@ -801,6 +801,74 @@ Note the `anchor_chains ⊆ ∪(supported chains)` constraint is satisfied: `[ba
 | FATF Travel Rule (Recommendation 16) | VASP counterparty due diligence |
 | OECD CRS | Cross-border reportable account determination |
 
+### Observational: x402 settlement counter
+
+A neutral measurement layer that aggregates over the on-chain settlements other emitters produce. Does not emit attestations of its own. Its outputs are deterministic functions of the observed settlement set, reproducible by any other observer reading the same chain data.
+
+**Implementor:** Agent 402 Tape
+
+```yaml
+extensions.bazaar.category: Compliance
+extensions.bazaar.evidenceType: observational
+extensions.bazaar.evidenceShape:
+  determinism: aggregating
+  signedReceipt: false
+  anchor_chains: [base, polygon, optimism, arbitrum, solana]
+  contributing_chains: [base, polygon, optimism, arbitrum, solana]
+  outputs:
+    - per_category_settlement_count
+    - per_evidence_type_settlement_count
+    - per_facilitator_signer_diversity
+    - declared_vs_observed_signer_diff
+    - anchor_vs_contributing_constraint_check
+  attestation_url: https://tape.agent402.app/methodology
+```
+
+Corresponding `PaymentRequired` extension fragment:
+
+```json
+{
+  "extensions": {
+    "bazaar": {
+      "category": "Compliance",
+      "evidenceType": "observational",
+      "evidenceShape": {
+        "determinism": "aggregating",
+        "signedReceipt": false,
+        "anchor_chains": ["base", "polygon", "optimism", "arbitrum", "solana"],
+        "contributing_chains": ["base", "polygon", "optimism", "arbitrum", "solana"],
+        "outputs": [
+          "per_category_settlement_count",
+          "per_evidence_type_settlement_count",
+          "per_facilitator_signer_diversity",
+          "declared_vs_observed_signer_diff",
+          "anchor_vs_contributing_constraint_check"
+        ],
+        "attestation_url": "https://tape.agent402.app/methodology"
+      },
+      "info": { "...": "..." }
+    }
+  }
+}
+```
+
+Both structural constraints follow from what an observer can know:
+
+- `signedReceipt` MUST be `false`. An observer does not sign anything because it does not attest to anything specific. The on-chain settlements it counts are themselves the proof.
+- `anchor_chains == contributing_chains` is REQUIRED. You can only count what you can read. Unlike `regulatory` (which can attest on chain A about activity on chain B), an observational implementor's anchor is exactly the set of chains it observes.
+
+**Outputs reference:**
+
+| Output | What it publishes |
+|---|---|
+| `per_category_settlement_count` | Count of x402 settlements per `category` over a time window |
+| `per_evidence_type_settlement_count` | Same, sliced by `evidenceType` (regulatory / behavioral / observational / cryptographic) |
+| `per_facilitator_signer_diversity` | Unique `tx_from` wallets observed per facilitator over the window |
+| `declared_vs_observed_signer_diff` | Gap between the facilitator's declared `/supported` signer set and the wallets actually observed settling |
+| `anchor_vs_contributing_constraint_check` | Verification that `anchor_chains ⊆ contributing_chains` holds for behavioral implementors |
+
+The observational class turns `category` + `evidenceType` registry tags into a queryable measurement view without itself making any compliance claim. The `anchor_vs_contributing_constraint_check` output is the independent-auditability layer for behavioral implementors: any service whose declared anchor exceeds its observed contributing set can be flagged from the observation plane.
+
 ---
 
 ## Compliance Category: Discovery Filter
