@@ -650,7 +650,22 @@ The two fields carry different semantics depending on `evidenceType`:
 
 > `anchor_chains ⊆ contributing_chains` is NOT required, but `anchor_chains ⊆ ∪(supported chains)` IS required. A regulatory service MAY anchor on Base while attesting about XRPL activity, but may not anchor on a chain it does not support. The legal frameworks define the contributing set; the emitter's infrastructure defines the anchor set.
 
+**For `evidenceType: "observational"`:** An observer does not attest to anything — it counts on-chain settlements that other emitters produce. It can only count what it can read:
+
+> `anchor_chains == contributing_chains` is REQUIRED. An observational service MUST NOT declare an anchor chain outside its observation set, and MUST observe every chain it declares. `signedReceipt` MUST be `false`; the on-chain settlements are themselves the proof.
+
+As a side effect, the observational layer makes the behavioral `anchor_chains ⊆ contributing_chains` rule independently auditable: any implementor whose declared anchor exceeds their observed contributing set can be flagged from the observation plane.
+
 This asymmetry is structural, not incidental: it reflects what each evidence class can legitimately attest about.
+
+**Summary table:**
+
+| `evidenceType` | `anchor_chains` constraint | `signedReceipt` |
+|---|---|---|
+| `behavioral` | `anchor_chains ⊆ contributing_chains` REQUIRED | Optional |
+| `regulatory` | `anchor_chains ⊆ ∪(supported chains)` REQUIRED | Recommended |
+| `observational` | `anchor_chains == contributing_chains` REQUIRED | MUST be `false` |
+| `cryptographic` | Implementation-defined | Required |
 
 ---
 
