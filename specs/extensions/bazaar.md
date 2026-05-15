@@ -587,3 +587,112 @@ Facilitators are **not expected** to support v1. If v1 support is desired:
 | `accepts[0].mimeType` | `mimeType` (top-level) |
 
 V1 had no formal schema validation.
+
+---
+
+## Settlement Visibility: `privacy_class`
+
+### Overview
+
+The `privacy_class` field declares the **settlement-plane visibility** of a Bazaar-listed service — specifically, how visible the underlying x402 settlement is to the measurement and compliance layers. It is an optional field on `extensions.bazaar` and is **orthogonal** to `evidenceType` (which describes the receipt shape of the evidence the service produces, not the settlement itself).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `privacy_class` | string | No | Settlement-plane visibility intent. See enumeration below. Facilitators MUST treat unrecognised values as `null`. |
+
+### Values
+
+| Value | Description |
+|---|---|
+| `"public-settlement"` | Settlement is readable on chain. Fully visible to the observational layer. Default for all existing Bazaar services; assumed when `privacy_class` is absent. |
+| `"attested-private"` | Settlement details are hidden, but a non-revealing proof-of-occurrence is anchored publicly. The observational layer counts the attestation artifact, not the individual settlement. Aligns with MiCA Art. 80 (5y record-keeping), AMLR Art. 56 (retention), GDPR Art. 5(1)(c) (data minimisation), ISO 20022 sanctions screening without transaction-graph leakage. |
+| `"fully-private"` | No public artifact emitted. Explicitly outside the measurement plane. Regulatory implementors generally cannot operate here under AMLR Art. 22 (PEP enhanced CDD requires verifiable trails) or DORA Art. 17 (incident reporting). Declaring this value lets observers and policy routers route around the service rather than appear to miscount. |
+
+The enumeration is **open**: future values MAY be added via spec PR without invalidating existing entries.
+
+### Orthogonality with `evidenceType`
+
+`privacy_class` and `evidenceType` are independent axes. `evidenceType` describes what a service produces and attests to; `privacy_class` describes what the underlying settlement reveals on chain. Any combination is valid:
+
+| Example | `evidenceType` | `privacy_class` |
+|---|---|---|
+| Bank settling stablecoin under MiCA, hiding transaction graph | `regulatory` | `attested-private` |
+| ZK proof emitter on a transparent chain | `cryptographic` | `public-settlement` |
+| Behavioral gateway with fully public settlement | `behavioral` | `public-settlement` |
+| ZK-shielded endpoint with no public artifact | `cryptographic` | `fully-private` |
+
+### Cardinality counting for `attested-private` batches
+
+A single Merkle-root anchor may commit to N individual settlements. Without an explicit count, the observational layer cannot distinguish a 1-settlement anchor from a 1,000-settlement batch — making public and batched-private rails permanently compare-incomparable at the aggregate level.
+
+**Rule (MUST):** When `privacy_class` is `"attested-private"`, the emitter MUST include `settlement_count` inside the JCS-canonicalised, signed attestation object:
+
+```json
+{
+  "attestation": {
+    "settlement_count": 47,
+    "merkle_root": "0xabc...",
+    "framework": "MiCA",
+    "issuer_did": "did:web:tooloracle.io",
+    "timestamp": "2026-05-15T20:00:00Z"
+  },
+  "signature": "es256k(JCS(attestation))"
+}
+```
+
+`settlement_count` MUST be inside the signed `attestation` object, not published as a separate adjacent field. This binds the batch size to the attestation under MiCA Art. 80 / AMLR Art. 56 retention — a regulator holding the signed object can verify the count without trusting an out-of-band assertion.
+
+Emitters MAY replace or augment `settlement_count` with a succinct batch-size proof (format implementation-defined under `evidenceType: cryptographic`). Observers that cannot verify the proof MUST fall back to the `settlement_count` integer; observers that encounter neither MUST count 1 per anchor event (explicit declared fallback, not silent undercount).
+
+### Cross-observer determinism
+
+Two observational implementors measuring the same `attested-private` rail MUST produce identical per-class aggregates for the same time window. Deduplication rule:
+
+> An attestation event is counted if and only if `(JCS_hash(attestation), anchor_chain, block_number)` is unique within the observer's declared observation window. `JCS_hash` is defined as the SHA-256 digest of the JCS (RFC 8785) serialisation of the attestation object, encoded as lowercase hex.
+
+SHA-256 is the mandatory floor. Future algorithm agility MAY be added behind a version field without breaking v1 consumers.
+
+The **observation window** is the contiguous time range over which the observer asserts complete coverage, as declared in its own registry entry. Counts from different observers with different windows may legitimately differ; the window is part of the count's identity, not a hidden parameter. Observers MUST declare their window in their registry entry.
+
+### Regulatory emitter behaviour for `fully-private` payers
+
+Regulatory checks under AMLR Art. 22 (PEP enhanced CDD), MiCA Art. 35 (reserve attestation), and PSD2 Art. 97 (SCA) require verifiable trails as a constitutive element of the check — not as auxiliary evidence. A fully-private settlement produces no verifiable trail; any attestation issued against it is legally void under these frameworks while appearing identical to a genuine determination at the protocol layer.
+
+**Rule (MUST NOT / SHOULD):** A regulatory emitter receiving a `TrustQuery` with `payer.privacy_class: "fully-private"` MUST NOT return `decision: ALLOW` or `decision: BLOCK` without an `evidence_unverifiable` flag. The emitter SHOULD either:
+
+- **(a) Refuse:** Return `decision: "REFUSE"` with `reason_code: "EVIDENCE_UNVERIFIABLE"`.
+- **(b) Degrade:** Return the closest applicable determination with `evidence_unverifiable: true` appended inside the signed attestation payload.
+
+Implementors with different risk appetites MAY choose either path; the spec requires one of the two. Silent acceptance is not compliant.
+
+**Per-band regulatory feasibility (informative):**
+
+| Check | `public-settlement` | `attested-private` | `fully-private` |
+|---|---|---|---|
+| AMLR Art. 16 (sanctions screen) | ✓ direct | ✓ on commitment | ✗ |
+| AMLR Art. 22 (PEP enhanced CDD) | ✓ | ⚠ commitment + reveal-on-trigger | ✗ |
+| AMLR Art. 44 (STR filing) | ✓ | ✓ trigger reveals to FIU only | ✗ |
+| MiCA Art. 35 (reserve attestation) | ✓ | ✓ Merkle root of reserves | ✗ |
+| MiCA Art. 80 (5y retention) | ✓ | ✓ encrypted-at-rest acceptable | ✓ private-but-retained |
+| PSD2 Art. 97 (SCA) | ✓ | ✓ | ✗ |
+| DORA Art. 17 (incident report) | ✓ | ✓ party reveals to NCA | ✗ |
+| ISO 20022 pacs.008 (sanctions) | ✓ on plaintext | ✓ on commitment | ✗ |
+
+Pattern: most regulatory checks compose with `attested-private` if the commitment scheme supports the right disclosure primitive. Almost none compose with `fully-private` because verifiable trails are constitutive of the check under EU AMLR, MiCA, DORA, and PSD2/3. `fully-private` is effectively an opt-out from regulatory applicability for most frameworks.
+
+### `disclosure_policy` sub-field (optional)
+
+For `privacy_class: "attested-private"` services, an optional `disclosure_policy` sub-field MAY be declared on `extensions.bazaar` to distinguish the selective-disclosure pattern from the non-revealing pattern:
+
+| Value | Description |
+|---|---|
+| `"non-revealing"` | The commitment is final. No disclosure path exists after anchoring. Default when `disclosure_policy` is absent on an `attested-private` service. |
+| `"reveal-on-authority-request"` | The commitment can be selectively disclosed to a named authority class (e.g. FIU, NCA) under a defined trigger (e.g. court order, suspicious transaction report). The disclosure mechanism is implementation-defined. |
+
+Facilitators MUST treat `disclosure_policy` as informative metadata; they MUST NOT gate payment processing on its value.
+
+### Related
+
+- [#2322](https://github.com/x402-foundation/x402/pull/2322) — `category: Compliance` taxonomy, `evidenceType`/`evidenceShape` fields, and constraint rules. `privacy_class` is additive to that taxonomy.
+- [#2326](https://github.com/x402-foundation/x402/issues/2326) — Working group discussion that produced this spec text.
+- [a2aproject/A2A#1786](https://github.com/a2aproject/A2A/issues/1786) — JCS canonicalization alignment on the behavioral side.
