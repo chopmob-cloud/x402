@@ -630,6 +630,7 @@ When `category: "Compliance"` is declared, the bazaar extension SHOULD include `
 | `determinism` | string | No | One of `"single-call"` (result is complete per call) or `"accumulating"` (result improves with more observations). |
 | `framework` | array of string | No | Open enum. Named legal or technical frameworks the service attests against (e.g. `["MiCA", "DORA", "AMLR"]`). |
 | `signedReceipt` | boolean | No | Whether the service emits a cryptographically signed receipt per decision. When `true`, the signed payload MUST be serialised using JCS (RFC 8785) before signing, ensuring a single verifier implementation can validate receipts across all `evidenceType` classes. |
+| `content_hash` | string | No | When the receipt anchors a content commitment (the structured inputs + outputs being attested to), `content_hash` is defined as the SHA-256 digest of the JCS (RFC 8785) serialisation of the canonical attestation pre-image, encoded as lowercase hex. This matches `JCS_hash` as defined in #2326 / #2334 for cross-observer determinism, so a single verifier implementation can validate both the receipt envelope (`signedReceipt`) and the content commitment with one canonicalization code path. |
 | `signing_did` | string | No | DID of the signing key (e.g. `did:web:tooloracle.io`). Present when `signedReceipt: true`. |
 | `signature_algorithm` | string | No | Signing algorithm (e.g. `ES256K`). Present when `signedReceipt: true`. |
 | `retention_years` | number | No | Minimum receipt retention period in years. Informed by applicable regulation (AMLR Art. 56: 5y min / 10y extended; DORA Art. 14: 3y; MiCA Art. 80: 5y). |
@@ -849,7 +850,7 @@ The following end-to-end example shows how a `category: "Compliance"` service in
 }
 ```
 
-The `evidence_uri` resolves to a content-hash-anchored JSON object signed under `did:web:feedoracle.io:predictionguard` (ES256K). The `content_hash` is deterministic over the canonical JSON of inputs and outputs, so the receipt is verifiable independent of signing-layer availability. Live endpoint: `https://tooloracle.io/v2/integrity_gate` ($0.02 USDC, Base mainnet). [First on-chain settlement proof](https://basescan.org/tx/0x6314acf04b4db3fac558cc5765333afb19befc283971b048a024f5950499ef3d).
+The `evidence_uri` resolves to a content-hash-anchored JSON object signed under `did:web:feedoracle.io:predictionguard` (ES256K). The `content_hash` is computed per the canonical definition in the `evidenceShape` table — SHA-256 of the JCS (RFC 8785) serialisation of the attestation pre-image, lowercase hex — so the receipt is verifiable independent of signing-layer availability and a single verifier implementation can validate both the envelope and the content commitment. Live endpoint: `https://tooloracle.io/v2/integrity_gate` ($0.02 USDC, Base mainnet). [First on-chain settlement proof](https://basescan.org/tx/0x6314acf04b4db3fac558cc5765333afb19befc283971b048a024f5950499ef3d).
 
 #### Composition with behavioral and observational classes
 
