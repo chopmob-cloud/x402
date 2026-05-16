@@ -689,6 +689,8 @@ For `privacy_class: "attested-private"` services, an optional `disclosure_policy
 | `"non-revealing"` | The commitment is final. No disclosure path exists after anchoring. Default when `disclosure_policy` is absent on an `attested-private` service. |
 | `"reveal-on-authority-request"` | The commitment can be selectively disclosed to a named authority class (e.g. FIU, NCA) under a defined trigger (e.g. court order, suspicious transaction report). The disclosure mechanism is implementation-defined. |
 
+The `disclosure_policy` enum is open. Implementors MAY declare other `disclosure_policy` values (for example `"reveal-on-court-order"`, where the trigger is specifically a judicial order rather than an administrative FIU/NCA request — a distinction with subtly different semantics in some EU jurisdictions). Facilitators MUST treat unknown `disclosure_policy` values as opaque (no policy-based routing) rather than rejecting the registry entry, for the same maintenance-pressure reason the `framework` enum in #2322 is open: jurisdictional disclosure mechanics evolve faster than spec PR cycles.
+
 Facilitators MUST treat `disclosure_policy` as informative metadata; they MUST NOT gate payment processing on its value.
 
 ### Related
