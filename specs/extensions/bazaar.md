@@ -893,6 +893,246 @@ Under a **STRICT** aggregation policy: any regulatory FAIL aborts settlement imm
 
 ---
 
+### Cryptographic: Multi-chain audit-bundle facilitator
+
+A proof-of-process service emitting cryptographically verifiable bundles for retained payment-decision events. Cryptographic-class evidence asserts *that an event occurred, that the bundle has not been tampered with, and that no row between disclosed rows was silently dropped* — not *what the regulatory determination was* (regulatory class) or *what the historical pattern looks like* (behavioral class). The proof itself is the evidence: a selective-disclosure bundle of hash-chained rows, each row's `content_hash` computed per the canonical definition in the `evidenceShape` table, signed end-to-end and anchored off-VM under WORM Object Lock retention.
+
+A cryptographic-class emitter MAY operate alongside other classes — for example, AlgoVoi acts as the regulatory-class emitter for its own ALLOW/BLOCK decisions on `/compliance/screen` AND as the cryptographic-class emitter for the audit-chain rows that prove those decisions occurred. The two classes compose without interference: the regulatory decision's payload is anchored by the cryptographic row's `content_hash`.
+
+**Implementor:** chopmob-cloud / AlgoVoi (api.algovoi.co.uk)
+
+```yaml
+extensions.bazaar.category: Compliance
+extensions.bazaar.evidenceType: cryptographic
+extensions.bazaar.evidenceShape:
+  determinism: single-call
+  proof_systems:
+    - hash-chain
+    - selective-disclosure-bundle
+    - off-vm-anchor
+  signedReceipt: true
+  signing_did: did:web:api.algovoi.co.uk
+  signature_algorithm: HMAC-SHA-256
+  content_hash: required        # SHA-256(JCS(pre-image)), lowercase hex
+  retention_years: 7
+  retention_mode: B2-Object-Lock-COMPLIANCE
+  anchor_chains:
+    - audit_log                       # one of the four canonical AlgoVoi hash chains
+    - screening_hits
+    - compliance_events
+    - negotiation_trace_events
+  contributing_chains:
+    - algorand-mainnet
+    - voi-mainnet
+    - base
+    - solana
+    - stellar-mainnet
+    - hedera-mainnet
+    - tempo
+    - arc-testnet
+  outputs:
+    - PASS                            # all four verification stages succeed
+    - FAIL                            # any stage fails (per_row_content_hash / continuity / signature / off_vm_anchor)
+  attestation_url: https://api.algovoi.co.uk/compliance/attestation
+```
+
+Corresponding `PaymentRequired` extension fragment:
+
+```json
+{
+  "extensions": {
+    "bazaar": {
+      "category": "Compliance",
+      "evidenceType": "cryptographic",
+      "evidenceShape": {
+        "determinism": "single-call",
+        "proof_systems": ["hash-chain", "selective-disclosure-bundle", "off-vm-anchor"],
+        "signedReceipt": true,
+        "signing_did": "did:web:api.algovoi.co.uk",
+        "signature_algorithm": "HMAC-SHA-256",
+        "content_hash": "required",
+        "retention_years": 7,
+        "retention_mode": "B2-Object-Lock-COMPLIANCE",
+        "anchor_chains": ["audit_log", "screening_hits", "compliance_events", "negotiation_trace_events"],
+        "contributing_chains": ["algorand-mainnet", "voi-mainnet", "base", "solana", "stellar-mainnet", "hedera-mainnet", "tempo", "arc-testnet"],
+        "outputs": ["PASS", "FAIL"],
+        "attestation_url": "https://api.algovoi.co.uk/compliance/attestation"
+      },
+      "info": { "...": "..." }
+    }
+  }
+}
+```
+
+Note that `anchor_chains` for cryptographic-class evidence carries a different semantic than for regulatory or behavioral: rather than blockchain networks, it enumerates the *named hash chains* the emitter operates (each row format-versioned with its own canonical-fields layout). The `anchor_chains ⊆ contributing_chains` constraint applies asymmetrically: a hash chain's rows are commitments to events that occurred on the contributing blockchain set, and the chain itself is anchored off-VM (Object Lock manifest) rather than on any single contributing chain. A cryptographic emitter MUST NOT declare a hash chain in `anchor_chains` that does not exist on the off-VM anchor manifest — verifiers exposed to such a declaration MUST raise FAIL.
+
+#### Proof systems
+
+The `proof_systems` field is an open enum. Each declared system MAY carry a sub-shape that documents its commitment scheme and verification path. Facilitators MUST treat absent sub-shapes as opaque and MUST NOT reject a registry entry for missing sub-shapes. Below are the three sub-shapes AlgoVoi operates:
+
+```yaml
+proof_system: hash-chain
+chaining_algorithm: SHA-256
+chain_atomicity: per-row-INSERT
+chains_emitted: [audit_log, screening_hits, compliance_events, negotiation_trace_events]
+canonicalisation: RFC-8785-JCS
+public_verifier: https://github.com/chopmob-cloud/algovoi-audit-verifier
+chain_format_version: 1
+bridging_rows_supported: true        # selective disclosure with continuity proof
+```
+
+```yaml
+proof_system: selective-disclosure-bundle
+envelope_signature: HMAC-SHA-256
+canonicalisation: RFC-8785-JCS
+schema_url: https://api.algovoi.co.uk/schemas/audit-bundle.schema.json
+bundle_emit_endpoints:
+  - /internal/audit-bundle                  # operator-only, generates audit_log bundles
+  - /internal/screening-hits-bundle
+  - /internal/compliance-events-bundle
+  - /internal/negotiation-trace-bundle
+verification_recipe:
+  - per_row_content_hash                    # recompute SHA-256(JCS(canonical fields)) per row
+  - continuity                              # prev_hash links unbroken, including bridging rows
+  - bundle_signature                        # HMAC-SHA-256 over JCS-canonicalised bundle envelope
+  - off_vm_anchor                           # chain_anchor.row_hash matches Object Lock manifest entry
+```
+
+```yaml
+proof_system: off-vm-anchor
+storage: Backblaze-B2-Object-Lock-COMPLIANCE
+retention_years: 7
+manifest_canonicalisation: RFC-8785-JCS
+auditor_check: |
+  aws s3api head-object \
+    --bucket algovoi-audit-anchor-{chain_name} \
+    --key {chain_name}/{period}/manifest.json
+  → object_lock_mode=COMPLIANCE, object_lock_retain_until_date ≥ retention_years
+```
+
+Each proof system is independently verifiable: a consumer can replay the hash chain offline from the bundle alone, can verify the bundle signature without seeing the underlying hash chain, or can confirm the off-VM anchor against the Object Lock manifest without trusting AlgoVoi's gateway at all. Layered verification (all three together) produces the strongest guarantee — the reference verifier ([`verify_audit_bundle.py`](https://github.com/chopmob-cloud/algovoi-audit-verifier/blob/main/verify_audit_bundle.py)) runs all three by default.
+
+#### TrustQuery → TrustEvaluation roundtrip
+
+The cryptographic-class evaluator does NOT operate at per-call latency. The verification path requires possession of a selective-disclosure bundle (emitted operator-side or handed to an external auditor) and is run **offline** against the public verifier repo. This roundtrip shows how a registry-aware trust-provider hook (#2300) signals "the previously-emitted bundle is verifiable" rather than "verify this in 50ms inline".
+
+**TrustQuery (incoming):**
+
+```json
+{
+  "schema": "x402-trust-query-v0.1",
+  "payer": {
+    "agent_id": "did:web:agent-42.example.com",
+    "wallet": "GHSRL2SAY247LWE7HLUGEYKHC5JMDOGWECW5TMN6PTP73FT2Z5AWMADMWI"
+  },
+  "resource": {
+    "url": "https://api.algovoi.co.uk/compliance/screen",
+    "method": "POST",
+    "amount": { "value": "10000", "currency": "USDC", "chain": "base" }
+  },
+  "context": {
+    "category": "Compliance",
+    "evidenceType": "cryptographic",
+    "proof_systems_requested": ["hash-chain", "off-vm-anchor"],
+    "chain_name": "compliance_events",
+    "prior_event_window": ["2026-05-15T00:00:00Z", "2026-05-15T23:59:59Z"]
+  },
+  "requested_at": "2026-05-15T18:30:00Z"
+}
+```
+
+**TrustEvaluation (from cryptographic evaluator):**
+
+```json
+{
+  "schema": "x402-trust-evaluation-v0.1",
+  "provider": "AlgoVoi (api.algovoi.co.uk)",
+  "decision": "PASS",
+  "score": 100,
+  "evidence_uri": "https://api.algovoi.co.uk/compliance/attestation",
+  "bundle_pointer": {
+    "chain_name": "compliance_events",
+    "chain_format_version": 1,
+    "selection_window": ["2026-05-15T00:00:00Z", "2026-05-15T23:59:59Z"],
+    "emit_endpoint": "/internal/compliance-events-bundle",
+    "rows_in_window": 47,
+    "min_chain_position": 4128091,
+    "max_chain_position": 4128137,
+    "chain_head_at_emit": 4128152
+  },
+  "off_vm_anchor": {
+    "manifest_url": "s3://algovoi-audit-anchor-compliance-events/2026-05-15/manifest.json",
+    "object_lock_mode": "COMPLIANCE",
+    "object_lock_retain_until_date": "2033-05-15T00:00:00Z",
+    "chain_head_hash": "8f3a2b1d4c9e7f6a5b8c2d4e1f3a5b7c9d2e4f6a8b1c3d5e7f9a2b4c6d8e0f1a"
+  },
+  "verifier": {
+    "tool": "verify_audit_bundle.py",
+    "url": "https://github.com/chopmob-cloud/algovoi-audit-verifier",
+    "command_example": "python verify_audit_bundle.py bundle.json --signing-key $ALGOVOI_PUBLIC_KEY",
+    "stdlib_only": true,
+    "pypi_dependencies": ["rfc8785"]
+  },
+  "ttl_seconds": 86400,
+  "evaluated_at": "2026-05-15T18:30:01Z"
+}
+```
+
+The `evidence_uri` points to AlgoVoi's public compliance attestation document, which carries the current signing key id and the canonical schema URL. The `bundle_pointer` describes where a bundle covering the requested window can be emitted (operator-only `/internal/*-bundle` endpoints — the bundle is selective-disclosure and not auto-released). The `off_vm_anchor` block provides the Object Lock manifest reference an external auditor can independently verify with `aws s3api head-object`.
+
+A consumer that does not trust the signing key id can still verify the bundle by:
+1. Resolving the chain head hash from the Object Lock manifest (no AlgoVoi trust required — S3 / B2 attests retention mode and date)
+2. Running `verify_audit_bundle.py` against the bundle file (stdlib + `rfc8785` only — runs offline on an air-gapped machine per the [auditor runbook](https://github.com/chopmob-cloud/algovoi-audit-verifier/blob/main/AUDITOR-RUNBOOK.md))
+3. Confirming the recomputed chain head matches both the signed bundle envelope AND the off-VM manifest
+
+The verifier's 30-second smoke test (no real bundle required) is `python demo_audit_bundle.py && python verify_audit_bundle.py demo_bundle.json --signing-key 'demo-key-not-for-production-use'` — a fresh auditor can confirm their toolchain works before handling the real bundle.
+
+#### Composition with regulatory, behavioral, and observational classes
+
+A composite verdict at the trust-provider hook combines all four classes. The cryptographic class is unique in that it does not emit a *content* decision (ALLOW/BLOCK/WARN are regulatory); it emits a *retention* decision (PASS / FAIL) about the audit trail of prior calls:
+
+```
+TrustQuery
+    ├── regulatory   (tooloracle.io): framework-bound, decision content
+    │       FAIL = "this transaction triggered rule X"
+    │
+    ├── behavioral   (AlgoVoi-behavioral): accumulating, multi-chain
+    │       FAIL = "this payer's historical pattern is suspicious"
+    │
+    ├── observational (Agent 402 Tape): aggregating, neutral count
+    │       No verdict — independent observation plane
+    │
+    └── cryptographic (AlgoVoi-cryptographic): per-bundle, proof-of-retention
+            FAIL = "the audit bundle for the requested window has a broken
+                    per_row_content_hash, continuity gap, signature
+                    mismatch, or off-VM anchor divergence — downstream
+                    verifiers cannot confirm what AlgoVoi recorded"
+```
+
+Under a **STRICT** policy: any regulatory FAIL aborts the current call; a cryptographic FAIL does not abort the current call (the audit gap is historical, not current) but flags an out-of-band investigation and SHOULD elevate the regulatory class's policy to fail-closed until the audit gap is reconciled. Under a **custom** policy: cryptographic FAIL can be treated as an automatic regulatory FAIL for high-risk-band transactions (a regulator cannot evidence what was previously recorded, so the conservative posture is to refuse new activity until the chain is reconciled).
+
+The cryptographic class also makes the regulatory class's `signedReceipt: true` claim *operationally* verifiable: a regulatory emitter that declares `signedReceipt: true` but whose receipts are not retained or anchored is exposed by the cryptographic verifier as a continuity gap. This is the cross-class enforcement mechanism for the JCS / `content_hash` canonicalization rule defined in the `evidenceShape` table.
+
+**Proof system coverage (catalog level):**
+
+| Proof system | Algorithm | Public verifier | Retention | Public surface |
+|---|---|---|---|---|
+| Hash chain (per row) | SHA-256 prev_hash linking, JCS canonicalisation | [algovoi-audit-verifier](https://github.com/chopmob-cloud/algovoi-audit-verifier) (`per_row_content_hash` + `continuity` checks) | B2 Object Lock COMPLIANCE, 7y | Bundle envelope (operator-emitted) |
+| Selective-disclosure bundle | HMAC-SHA-256 over JCS-canonical envelope | Same verifier (`bundle_signature` check) | WORM-retained alongside chain | Schema at `/schemas/audit-bundle.schema.json` |
+| Off-VM anchor | Object Lock COMPLIANCE manifest, JCS-canonical | Same verifier (`off_vm_anchor` check) + `aws s3api head-object` | Backblaze B2, 7y minimum | Object Lock retain-until date in attestation |
+
+**Cross-class composition examples (catalog level):**
+
+| Composition | Use case | Why it works |
+|---|---|---|
+| regulatory + cryptographic | Compliance decision with verifiable audit trail | Cryptographic chain proves the regulatory determination was retained per AMLR Art. 56 / MiCA Art. 80 (5-year minimum, COMPLIANCE-mode Object Lock) |
+| behavioral + cryptographic | Trust score with replay-proof history | Score history is chained per-event in `negotiation_trace_events`; consumers can verify the score wasn't fabricated retroactively |
+| observational + cryptographic | Public settlement count with operator-anchor cross-check | Observer's count of settlements on a contributing chain can be cross-referenced with the operator's `compliance_events` chain row count for the same window |
+
+**Source and verification:** [Audit verifier repo (MIT)](https://github.com/chopmob-cloud/algovoi-audit-verifier) · [Auditor runbook](https://github.com/chopmob-cloud/algovoi-audit-verifier/blob/main/AUDITOR-RUNBOOK.md) · [Bundle schema](https://github.com/chopmob-cloud/algovoi-audit-verifier/blob/main/audit-bundle.schema.json) · [Compliance attestation endpoint](https://api.algovoi.co.uk/compliance/attestation) · [Bazaar listing](https://x402scan.com/origin/api.algovoi.co.uk)
+
+---
+
 ## Compliance Category: Discovery Filter
 
 Facilitators that implement the optional discovery endpoints (`GET /discovery/resources`, `GET /discovery/search`) SHOULD support filtering by `category` and `evidenceType`:
