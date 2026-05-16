@@ -612,6 +612,9 @@ The category enumeration is **open**: future categories may be added via spec PR
 
 ## Compliance Category: `evidenceType` and `evidenceShape`
 
+> **Routing-hint invariant.** The Compliance category envelope contains exactly five open routing hints (`signature_algorithm`, `commitment_scheme`, `framework`, `disclosure_policy`, and the `off_vm_anchor` inner-key). A verifier walking the envelope loads each as opaque routing-hint output without class-aware branching. This structural property lets worked examples in different evidence classes (behavioral, regulatory, cryptographic, observational) ship under separate authorship without forcing per-class verifier code paths downstream.
+
+
 When `category: "Compliance"` is declared, the bazaar extension SHOULD include `evidenceType` and `evidenceShape` fields that describe the evidence the service produces. These fields enable downstream consumers (trust-provider hooks, settlement gates, audit pipelines) to configure themselves from registry metadata alone, without per-emitter knowledge.
 
 ### `evidenceType`
@@ -1120,6 +1123,38 @@ The cryptographic class also makes the regulatory class's `signedReceipt: true` 
 | Hash chain (per row) | SHA-256 prev_hash linking, JCS canonicalisation | [algovoi-audit-verifier](https://github.com/chopmob-cloud/algovoi-audit-verifier) (`per_row_content_hash` + `continuity` checks) | B2 Object Lock COMPLIANCE, 7y | Bundle envelope (operator-emitted) |
 | Selective-disclosure bundle | HMAC-SHA-256 over JCS-canonical envelope | Same verifier (`bundle_signature` check) | WORM-retained alongside chain | Schema at `/schemas/audit-bundle.schema.json` |
 | Off-VM anchor | Object Lock COMPLIANCE manifest, JCS-canonical | Same verifier (`off_vm_anchor` check) + `aws s3api head-object` | Backblaze B2, 7y minimum | Object Lock retain-until date in attestation |
+
+### `off_vm_anchor` inner-key polymorphism (normative)
+
+The `off_vm_anchor` block in any cryptographic-class `evidenceShape` carries a canonical outer set of fields (`manifest_url`, `object_lock_mode`, `object_lock_retain_until_date`) and **one polymorphic inner key** whose name signals the structure of the off-VM artefact being committed to.
+
+Three inner-key shapes are enumerated as informative examples; the field is implementor-extensible the same way `disclosure_policy` and `framework` are:
+
+| Class × privacy | Inner key | What it commits to |
+|---|---|---|
+| Cryptographic × public-settlement (chain-based) | `chain_head_hash` | SHA-256 over the head row of the audit chain at emit time |
+| Cryptographic × attested-private (set-based) | `sanctions_set_root` | Merkle root over the external sanctions set the commitment is screened against |
+| Behavioral (receipt-based) | `receipt_chain_head` | Hash over the head of the bilateral-receipt chain |
+
+**Normative.** The inner-key value MUST hold `SHA-256(JCS(pre-image))` lowercase hex, where `pre-image` is the canonical structured representation of the off-VM artefact being anchored. The JCS canonicalisation floor applies uniformly across the envelope — there is exactly one canonicalisation rule, aligned with the `content_hash` definition above and `JCS_hash` in #2326 / #2334. Without this floor, a class-specific implementor could declare an inner-key (e.g. `custody_snapshot_root`) and ship raw SHA-256 over a non-canonical pre-image, breaking cross-verifier reproducibility.
+
+**Naming convention (informative, not normative).** Inner-key names follow a typographic convention indicating the structure of the off-VM artefact: `*_head` for ordered structures (chains, sequences, append-only logs), `*_root` for unordered structures (sets, multisets, Merkle commitments). Verifiers MUST NOT depend on the suffix for routing decisions — the suffix is mnemonic, not normative — but implementors SHOULD follow the convention so cross-verifier audit trails read consistently.
+
+### Composition rules (default registry behaviour)
+
+| Pattern | Registry rule | Consumer-side action |
+|---|---|---|
+| Same-class, same-key, same-window | `JCS_hash` dedup | Treat as one attestation |
+| Different-class, same-key, same-window | Additive | Sum/weight independently |
+| Same-class, same-key, disagreeing within-window | Preserve both | Score function resolves (consumer policy) |
+
+The third row is structurally distinct from the other two: when a single class emits two attestations against the same key within the same window using **different evidence sets** (commitment vs plaintext, fresh snapshot vs stale snapshot, different observation depth), the disagreement carries information about which evidence path the regulator should trust. The registry's job is to preserve both as independent records; the consumer's score function selects which one binds. This justifies the dedup key being `(JCS_hash, anchor_chain, block_number)` rather than `(JCS_hash, key, window)` — the dedup explicitly does not collapse disagreeing-but-distinct attestations from the same key in the same window, because those carry information.
+
+### Retention horizon convergence (informative)
+
+Cryptographic-class emitters targeting EU regulatory exposure converge on a **7-year retention horizon** as the practical floor that covers the union of MiCA Art. 80 (5y), AMLR Art. 56 (5y, 10y extended), DORA Art. 14 (3y operational + 5y incident-related), and PSD2 SCA (5y) without requiring per-framework branching. This convergence is observable across multiple independent implementations and is worth noting non-normatively so future implementors target the union rather than negotiating each framework individually.
+
+---
 
 **Cross-class composition examples (catalog level):**
 
