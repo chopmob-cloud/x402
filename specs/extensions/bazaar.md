@@ -701,7 +701,19 @@ For `attested-private` services with `evidenceType: regulatory` operating under 
 
 **Rule (MUST) — auditor-availability independence:** The on-chain Merkle root commits to the manifest's content, so manifest integrity MUST be verifiable against the on-chain root independently of the auditor's availability. If the auditor service is unreachable, a client that obtains the manifest content from any source (mirror, cache, alternative manifest host) MUST be able to verify that content against the on-chain root by content-hash equality, without the auditor in the path. The auditor's role is therefore narrowed to "publish the root + serve the manifest content"; it is not a verification bottleneck. An auditor outage MUST NOT stall integrity verification of an already-anchored manifest.
 
+**Implementation guidance (non-normative) — manifest failover order.** The MUST above is the correctness floor; the discovery order is the user-experience layer that decides whether an auditor outage is silent or visible. Clients SHOULD attempt manifest content retrieval in this order, surfacing which tier served the content so an outage is observable rather than masked: (1) the canonical auditor endpoint; (2) a configured mirror list, if declared in the registry entry; (3) content-addressed / decentralized storage (IPFS CID or equivalent) where the CID is derivable from, or committed alongside, the on-chain root. Integrity is enforced at every tier by content-hash equality against the on-chain root, so order affects latency and outage-visibility only, never trust. Clients SHOULD emit a degraded-source signal (telemetry or status field) when content is served from any tier other than the canonical auditor, so silent prolonged auditor outages become detectable.
+
 Pattern reference: `audit_chain.off_vm_shipment` rows anchored on chain at each commitment epoch (tested-against: AlgoVoi `/compliance/attestation` `audit_chain` schema as live on 2026-05-19, `evidence_provider.identity_reference` populated), with off-VM Object Lock COMPLIANCE 7y retention sitting underneath the on-chain anchor. The on-chain anchor is the primary third-party-verifiable denominator; auditor reconciliation against retention storage remains the secondary path. Live implementation surfaced at `/compliance/attestation` under `audit_chain.head`. Downstream readers SHOULD treat the cited pattern as version-pinned: conformance is asserted against the schema shape at the tested-against date, not an unversioned reference.
+
+### Conformance transitions
+
+A `tested-against` line binds a cited reference pattern to a spec version at a date. The spec therefore inherits an implicit backward-compatibility contract toward that pinned version, and conformance can lapse as the spec evolves. To prevent a spec revision silently breaking a documented integration:
+
+- When a spec revision changes any normative rule in the privacy_class surface, the revision MUST either (a) re-assert the prior `tested-against` reference as still conformant (re-tested, date bumped), or (b) carry an explicit deprecation line of the form `<pattern> <pinned-version> is no longer conformant against <spec-version>; see <migration note>`.
+- Deprecation lines MUST remain in the spec text for at least one subsequent revision so downstream consumers tracking the prior reference see the transition rather than a silent removal.
+- A reference whose `tested-against` date is older than the current spec revision without an accompanying re-assertion or deprecation line MUST be treated by readers as `conformance-unknown`, not as `conformant-by-default`.
+
+This makes conformance transitions announced and falsifiable rather than implicit, so a downstream consumer pinned to an older reference knows exactly what to watch.
 
 ### Attestation cadence floor (`attestation_cadence`)
 
