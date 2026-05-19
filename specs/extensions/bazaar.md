@@ -693,6 +693,59 @@ The `disclosure_policy` enum is open. Implementors MAY declare other `disclosure
 
 Facilitators MUST treat `disclosure_policy` as informative metadata; they MUST NOT gate payment processing on its value.
 
+### Manifest anchoring for `attested-private` × regulatory emitters
+
+For `attested-private` services with `evidenceType: regulatory` operating under MiCA Art. 80 / AMLR Art. 56 retention obligations, auditor-only Object Lock reconciliation is structurally weaker than third-party-verifiable count monotonicity. An emitter retaining its own off-VM manifest can prune the manifest and keep the on-chain attestation count consistent with the redacted bundle; auditor reconciliation passes but the count assertion remains uncontested by any party without disclosure authority.
+
+**Rule (MUST):** For `privacy_class: "attested-private"` with `evidenceType: "regulatory"`, the emitter MUST anchor the off-VM manifest's Merkle root on chain at each commitment epoch. The on-chain anchor MUST be a JCS-canonical attestation carrying `(manifest_root, epoch, settlement_count)` inside the signed object. Any third party (not only an auditor with `disclosure_policy` authority) MUST be able to verify count monotonicity against the on-chain anchor sequence.
+
+Pattern reference: `audit_chain.off_vm_shipment` rows anchored on chain at each commitment epoch, with off-VM Object Lock COMPLIANCE 7y retention sitting underneath the on-chain anchor. The on-chain anchor is the primary third-party-verifiable denominator; auditor reconciliation against retention storage remains the secondary path. Live implementation surfaced at `/compliance/attestation` under `audit_chain.head` and the `evidence_provider.identity_reference` field.
+
+### Attestation cadence floor (`attestation_cadence`)
+
+A self-declared cadence with no upper bound is gameable: an emitter declaring `heartbeat: 24h` under DORA produces an undetectable 24-hour silent-stop window even though DORA Art. 14 requires major-incident notification within 4 hours of classification. The spec MUST bind cadence to the strictest declared regulatory framework.
+
+**Rule (MUST):** When `evidenceShape.framework` declares one or more regulatory regimes, `attestation_cadence` MUST be `≤` the strictest incident-timing requirement of any declared framework:
+
+| Framework | Cadence floor |
+|---|---|
+| DORA Art. 14 (major ICT-related incidents) | `attestation_cadence` ≤ 4 hours (initial notification window) |
+| AMLR Art. 56 (retention bundle freshness) | `attestation_cadence` ≤ 24 hours |
+| MiCA Art. 80 (record-keeping) | `attestation_cadence` ≤ 24 hours |
+| ISO 20022 sanctions screening (pacs.008) | `attestation_cadence` ≤ commitment_epoch (real-time at settlement) |
+| PSD2/3 Art. 97 (SCA) | `attestation_cadence` ≤ commitment_epoch (per-settlement) |
+
+Observers MUST reject `attestation_cadence` values that exceed the framework-derived floor. Emitters with multiple declared frameworks bind to the **strictest** value (intersection, not union).
+
+`attestation_cadence` MUST be declared in the registry entry alongside `framework`. Observers compute coverage as `observed_attestations / expected_attestations` over the declared cadence window. Coverage below 100% is a positive observer signal that silent-stops are detectable, not a defect.
+
+### Privacy class mutability and append-only declaration history
+
+A service that flips `public-settlement` → `fully-private` mid-flight creates a window where in-flight observations sit in the wrong bucket. A service that declares `fully-private` retroactively could escape measurement of behavior already observed on chain. Without an append-only declaration history, the `privacy_class` field is a coverage hint rather than a compliance primitive.
+
+**Rule (MUST) — per-attestation binding:** The `privacy_class` value at the time of attestation emission MUST be bound to the attestation, not derived from the current registry value. The signed attestation object MUST carry `(privacy_class, effective_block_height)` inside the JCS-canonicalised payload:
+
+```json
+{
+  "attestation": {
+    "privacy_class": "attested-private",
+    "effective_block_height": 19847230,
+    "settlement_count": 47,
+    "manifest_root": "0xabc...",
+    "framework": "MiCA",
+    "issuer_did": "did:web:tooloracle.io",
+    "timestamp": "2026-05-19T06:00:00Z"
+  },
+  "signature": "ed25519(JCS(attestation))"
+}
+```
+
+This binds the declared class to the block height at which the attestation was emitted, closing the retroactive-declaration path identified in #2326.
+
+**Rule (SHOULD) — append-only registry log:** `privacy_class` declaration history SHOULD land in an append-only transparency-log substrate, with `(class, effective_block_height)` pairs the canonical observable. RFC 9162-shaped transparency logs (Foxbook, CT, Sigsum) are the recommended primitive; the registry-entry history becomes third-party-observable without per-emitter trust.
+
+Reference implementation: `did:foxbook:01KRXTMK3Z20J7V7MMD17W6T59` (Foxbook leaf 7) carries an AlgoVoi registry-entry history at https://transparency.foxbook.dev/leaf/7, where each `privacy_class` declaration pairs with its `effective_block_height` and the leaf inclusion proof is observable independently of the emitter.
+
 ### Related
 
 - [#2322](https://github.com/x402-foundation/x402/pull/2322) — `category: Compliance` taxonomy, `evidenceType`/`evidenceShape` fields, and constraint rules. `privacy_class` is additive to that taxonomy.
