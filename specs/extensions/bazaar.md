@@ -634,7 +634,7 @@ A single Merkle-root anchor may commit to N individual settlements. Without an e
     "merkle_root": "0xabc...",
     "framework": "MiCA",
     "issuer_did": "did:web:tooloracle.io",
-    "timestamp": "2026-05-15T20:00:00Z"
+    "timestamp_ms": 1778875200000
   },
   "signature": "es256k(JCS(attestation))"
 }
@@ -651,6 +651,10 @@ Two observational implementors measuring the same `attested-private` rail MUST p
 > An attestation event is counted if and only if `(JCS_hash(attestation), anchor_chain, block_number)` is unique within the observer's declared observation window. `JCS_hash` is defined as the SHA-256 digest of the JCS (RFC 8785) serialisation of the attestation object, encoded as lowercase hex.
 
 SHA-256 is the mandatory floor. Future algorithm agility MAY be added behind a version field without breaking v1 consumers.
+
+**Rule (MUST) — `timestamp_ms` lexical pinning.** The attestation timestamp field is named `timestamp_ms` and MUST be a JSON integer (milliseconds since Unix epoch). RFC 3339 string forms (e.g. `"2026-05-19T06:00:00Z"`, `"2026-05-19T06:00:00.000Z"`, `"2026-05-19T06:00:00+00:00"`) are NOT acceptable as the canonical attestation timestamp, because they admit multiple lexically distinct encodings of the same semantic instant — fractional-second presence/absence, `Z` vs `+00:00`, and varying fractional precision all produce different bytes under RFC 8785 and therefore different `JCS_hash` values. Two observers normalising precision differently would compute different `JCS_hash` for semantically identical attestations and the dedup rule above would break by construction. Producers and verifiers MUST canonicalise to `timestamp_ms` (epoch integer) before computing `JCS_hash`. JCS is necessary but not sufficient; schema normalisation of the timestamp field above JCS is the load-bearing piece.
+
+This rule aligns with the `timestamp_ms` convention pinned across x402 [#2326](https://github.com/x402-foundation/x402/issues/2326), [#2357](https://github.com/x402-foundation/x402/issues/2357), and [#2398](https://github.com/x402-foundation/x402/pull/2398), so the same canonicalisation rule binds receipt-layer and attestation-layer digests.
 
 The **observation window** is the contiguous time range over which the observer asserts complete coverage, as declared in its own registry entry. Counts from different observers with different windows may legitimately differ; the window is part of the count's identity, not a hidden parameter. Observers MUST declare their window in their registry entry.
 
@@ -769,7 +773,7 @@ A service that flips `public-settlement` → `fully-private` mid-flight creates 
     "manifest_root": "0xabc...",
     "framework": "MiCA",
     "issuer_did": "did:web:tooloracle.io",
-    "timestamp": "2026-05-19T06:00:00Z"
+    "timestamp_ms": 1779170400000
   },
   "signature": "ed25519(JCS(attestation))"
 }
@@ -781,8 +785,22 @@ This binds the declared class to the block height at which the attestation was e
 
 Reference implementation: `did:foxbook:01KRXTMK3Z20J7V7MMD17W6T59` (Foxbook leaf 7) carries an AlgoVoi registry-entry history at https://transparency.foxbook.dev/leaf/7, where each `privacy_class` declaration pairs with its `effective_block_height` and the leaf inclusion proof is observable independently of the emitter.
 
+### Conformance
+
+A conformance vector set for the `privacy_class` attestation digest is published at:
+
+https://gist.github.com/chopmob-cloud/30bcbc717c86493f737feb92c415ba07
+
+The set carries 10 vectors covering 6 paired invariants — object key order, array order, optional field presence, scalar form (block_height integer vs string), Unicode NFC vs NFD, and the `timestamp_ms` lexical-pinning pair introduced in this revision. Each vector specifies an `attestation_body`, the expected JCS canonical bytes (base64), and the expected `JCS_hash` (`sha256:<hex>`). Pair expectations of the form `same_hash_as:<vector>` and `different_hash_from:<vector>` are honour-checked.
+
+The set has been reproduced byte-for-byte across four independent JCS implementations: [`rfc8785@0.1.4`](https://github.com/trailofbits/rfc8785.py) (Python), [`canonicalize@3.0.0`](https://github.com/erdtman/canonicalize) (JavaScript), [`gowebpki/jcs@v1.0.1`](https://github.com/gowebpki/jcs) (Go), and [`cyberphone/json-canonicalization`](https://github.com/cyberphone/json-canonicalization) (Java; the reference implementation cited in RFC 8785). Single-file runners for each language ship in the gist alongside the artefact.
+
+Implementations claiming `privacy_class` compliance SHOULD validate the conformance vector set as part of their build, and SHOULD additionally validate any extensions to the attestation schema that they introduce.
+
 ### Related
 
 - [#2322](https://github.com/x402-foundation/x402/pull/2322) — `category: Compliance` taxonomy, `evidenceType`/`evidenceShape` fields, and constraint rules. `privacy_class` is additive to that taxonomy.
 - [#2326](https://github.com/x402-foundation/x402/issues/2326) — Working group discussion that produced this spec text.
+- [#2357](https://github.com/x402-foundation/x402/issues/2357) — STARK receipt extension; same `timestamp_ms` canonicalisation rule binds payment-receipt digests and attestation digests, so a verifier walking both layers uses one rule.
+- [#2398](https://github.com/x402-foundation/x402/pull/2398) — `action-ref-verify` conformance fixtures (work-receipt layer); vector 0009 documents the `timestamp` vs `timestamp_ms` divergence from the work-receipt side. Same invariant, two surfaces.
 - [a2aproject/A2A#1786](https://github.com/a2aproject/A2A/issues/1786) — JCS canonicalization alignment on the behavioral side.
