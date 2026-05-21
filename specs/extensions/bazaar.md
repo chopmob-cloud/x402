@@ -636,6 +636,7 @@ When `category: "Compliance"` is declared, the bazaar extension SHOULD include `
 | `retention_years` | number | No | Minimum receipt retention period in years. Informed by applicable regulation (AMLR Art. 56: 5y min / 10y extended; DORA Art. 14: 3y; MiCA Art. 80: 5y). |
 | `anchor_chains` | array of string | No | Networks where signed receipts are written and independently verifiable. |
 | `contributing_chains` | array of string | No | Networks whose activity the service checks or scores. |
+| `observation_window` | object | Required for `evidenceType: "observational"`, optional otherwise | `{"start_ms": <epoch_int>, "end_ms": <epoch_int \| null>}` declaring the contiguous time range over which the observer asserts complete coverage. `start_ms` and `end_ms` MUST be JSON integers (milliseconds since Unix epoch), matching the `timestamp_ms` canonicalisation rule in [#2334](https://github.com/x402-foundation/x402/pull/2334). `end_ms: null` indicates an open window currently being maintained. |
 | `outputs` | array of string | No | Decision values the service may return (e.g. `["ALLOW", "WARN", "BLOCK"]`). |
 | `attestation_url` | string | No | URL of the service's public compliance posture document. |
 
@@ -654,6 +655,8 @@ The two fields carry different semantics depending on `evidenceType`:
 **For `evidenceType: "observational"`:** An observer does not attest to anything — it counts on-chain settlements that other emitters produce. It can only count what it can read:
 
 > `anchor_chains == contributing_chains` is REQUIRED. An observational service MUST NOT declare an anchor chain outside its observation set, and MUST observe every chain it declares. `signedReceipt` MUST be `false`; the on-chain settlements are themselves the proof.
+
+Observational services MUST also declare an `observation_window` (see field definition above): the contiguous time range over which the observer asserts complete coverage. The cross-observer deduplication rule defined in [#2334](https://github.com/x402-foundation/x402/pull/2334) — `(JCS_hash(attestation), anchor_chain, block_number)` uniqueness — is window-scoped: counts from two observers with overlapping but non-identical windows may legitimately differ, and the window is part of the count's identity rather than a hidden parameter. `start_ms` and `end_ms` use the same `timestamp_ms` canonicalisation rule pinned in #2334 so receipt-layer timestamps and observation-window boundaries canonicalise identically.
 
 As a side effect, the observational layer makes the behavioral `anchor_chains ⊆ contributing_chains` rule independently auditable: any implementor whose declared anchor exceeds their observed contributing set can be flagged from the observation plane.
 
