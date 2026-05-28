@@ -8,6 +8,7 @@
 | Companion IETF I-D | [`draft-hopley-x402-compliance-receipt`](https://datatracker.ietf.org/doc/draft-hopley-x402-compliance-receipt/) |
 | Companion canonicalisation I-D | [`draft-hopley-x402-canonicalisation-jcs-v1`](https://datatracker.ietf.org/doc/draft-hopley-x402-canonicalisation-jcs-v1/) |
 | Reference impl | AlgoVoi-authored [`algovoi-substrate`](https://pypi.org/project/algovoi-substrate/) (PyPI) and [`@algovoi/substrate`](https://www.npmjs.com/package/@algovoi/substrate) (npm), Apache 2.0 |
+| Canonical specification page | [`docs.algovoi.co.uk/compliance-gate-v1`](https://docs.algovoi.co.uk/compliance-gate-v1) |
 | License | Apache 2.0 |
 
 ## 1. Scope
@@ -20,18 +21,31 @@ This extension is the senior artefact in the composition with the x402-foundatio
 
 ## 2. Normative format
 
-A compliance receipt is a JSON object canonicalised per the AlgoVoi-authored canonicalisation pin `urn:x402:canonicalisation:jcs-rfc8785-v1`, normatively defined in the IETF Internet-Draft [`draft-hopley-x402-canonicalisation-jcs-v1`](https://datatracker.ietf.org/doc/draft-hopley-x402-canonicalisation-jcs-v1/) (Independent Submission, sole AlgoVoi authorship). The pin composes RFC 8785 JCS with the `canon_version` discipline. The receipt is hashed under SHA-256.
+A compliance receipt is a seven-field JSON object canonicalised under RFC 8785 (JCS) per the AlgoVoi-authored canonicalisation pin `urn:x402:canonicalisation:jcs-rfc8785-v1`, normatively defined in the IETF Internet-Draft [`draft-hopley-x402-canonicalisation-jcs-v1`](https://datatracker.ietf.org/doc/draft-hopley-x402-canonicalisation-jcs-v1/) (Independent Submission, sole AlgoVoi authorship). The receipt's `content_hash` is SHA-256 over the JCS-canonical bytes. Field names are sorted lexicographically by JCS during canonicalisation.
 
-The receipt carries:
+```json
+{
+  "canon_version": "jcs-rfc8785-v1",
+  "compliance_provider_did": "did:web:api.algovoi.co.uk",
+  "issued_at_ms": 1716494400000,
+  "jurisdiction_flags": ["GB", "EU"],
+  "policy_pin": "samla-2018-s20-v3",
+  "subject_hash": "sha256:0dd5d0b76c9b9281fdeb2509ad38ab132b16a17385ca01d976ff9e6e12563a0f",
+  "verdict": "ALLOW"
+}
+```
 
-- `verdict`: closed enum, one of `ALLOW`, `REFER`, `DENY`
-- `reasons`: array of generic human-readable reason strings (SAMLA 2018 s.20 compliant: the specific list or program that produced a match MUST NOT be disclosed)
-- `screened_at`: ISO 8601 UTC timestamp of the screening result
-- `framework_basis`: array of regulatory framework identifiers the facilitator screens against (e.g. `["OFSI", "OFAC-SDN", "EU-Consolidated"]`)
-- `canon_version`: the canonicalisation pin identifier used for the receipt (this v1 spec uses `urn:x402:canonicalisation:jcs-rfc8785-v1` per the AlgoVoi-authored I-D referenced above)
-- `signature`: detached signature over the JCS canonical bytes
+| Field | Type | Description |
+|---|---|---|
+| `canon_version` | string | In-band canonicalisation pin. Fixed `jcs-rfc8785-v1` for this version. |
+| `compliance_provider_did` | string | DID URI of the issuing party. |
+| `issued_at_ms` | integer | Epoch milliseconds when the verdict was recorded. MUST be integer. RFC 3339 string forms rejected. |
+| `jurisdiction_flags` | ordered array of string | ISO 3166-1 alpha-2 codes; primary jurisdiction first. Array order is significant under RFC 8785 §3.2.3. |
+| `policy_pin` | string | Identifier of the specific policy version applied. Issuer-controlled. Relying parties SHOULD treat unrecognised values as opaque. |
+| `subject_hash` | string | `sha256:{hex}` reference to the JCS-canonical form of the bound payment payload (or of the gate-request, if the receipt was produced via the `pre-payment-compliance-gate-v1` companion extension). |
+| `verdict` | string (closed enum) | `ALLOW` / `REFER` / `DENY`. |
 
-Full field-level schema is normatively defined in the companion IETF Internet-Draft `draft-hopley-x402-compliance-receipt`.
+The canonical specification is hosted at the AlgoVoi-controlled URI [`docs.algovoi.co.uk/compliance-gate-v1`](https://docs.algovoi.co.uk/compliance-gate-v1) and normatively defined in the companion IETF Internet-Draft `draft-hopley-x402-compliance-receipt`. Implementations MUST follow the I-D where it is more specific than this extension document.
 
 ## 3. The categorical verdict enum
 
@@ -47,13 +61,15 @@ The enum is closed by design. Implementations MUST NOT extend the enum in-band b
 
 ## 4. SAMLA 2018 s.20 tipping-off discipline
 
-The `reasons` field uses generic phrasing only. The name of the sanctions list, the matched program, or any identifier that would let an external party reverse-engineer which list produced the hit MUST NOT appear in the receipt. Acceptable values include `"wallet address matches a sanctions designation"`, `"wallet address is associated with a flagged entity"`. Not acceptable: any list name, program name, or designation reference.
+The canonical receipt format does not include a free-form `reasons` field. The categorical `verdict` is the regulator-recognised admission-time decision; the underlying screening basis (which list matched, which program, which jurisdiction sub-rule) is the issuer's internal record and is **not** disclosed in the on-the-wire receipt. This format-level posture satisfies UK SAMLA 2018 s.20 tipping-off obligations by construction: there is no field in the canonical shape through which list-specific or program-specific information could leak to a downstream relying party.
+
+Implementers MUST NOT extend the receipt with additional informational fields that would re-introduce a tipping-off surface. The `policy_pin` field is the only issuer-controlled identifier in the canonical shape; it identifies a policy version, not a screening source.
 
 ## 5. Regulatory alignment
 
 | Framework | Property the compliance receipt addresses |
 |---|---|
-| **SAMLA 2018 s.20** (UK tipping-off) | Generic verdict shape; no list disclosure |
+| **SAMLA 2018 s.20** (UK tipping-off) | Categorical-only shape; no field through which list disclosure could occur |
 | **PSD2 sanctions-screening obligations** | Categorical admission-time decision is the form regulators expect |
 | **MiCA Article 80** (crypto-asset record-keeping) | Receipt is byte-deterministic under the AlgoVoi-authored canon pin for year-N re-verifiability |
 | **AMLR Article 56** (record-keeping) | Same byte-deterministic property |
@@ -63,7 +79,7 @@ This extension does not claim compliance certification under any of these framew
 
 ## 6. Reference implementation
 
-AlgoVoi-authored [`algovoi-substrate`](https://pypi.org/project/algovoi-substrate/) on PyPI and [`@algovoi/substrate`](https://www.npmjs.com/package/@algovoi/substrate) on npm. Apache 2.0. The package emits compliance receipts under the AlgoVoi-authored canonicalisation pin and verifies them byte-deterministically. Cross-validated 192/192 byte-for-byte across 8 independent language implementations (Python, TypeScript, Go, Rust, Java, PHP, .NET, Ruby). Conformance corpus: [`chopmob-cloud/algovoi-jcs-conformance-vectors`](https://github.com/chopmob-cloud/algovoi-jcs-conformance-vectors).
+AlgoVoi-authored [`algovoi-substrate`](https://pypi.org/project/algovoi-substrate/) on PyPI and [`@algovoi/substrate`](https://www.npmjs.com/package/@algovoi/substrate) on npm. Apache 2.0. The package emits compliance receipts under the AlgoVoi-authored canonicalisation pin and verifies them byte-deterministically. The canonicalisation layer underneath the receipt is cross-validated 192/192 byte-for-byte across 8 independent language implementations (Python, TypeScript, Go, Rust, Java, PHP, .NET, Ruby) per the AlgoVoi 8-impl matrix. Conformance corpus: [`chopmob-cloud/algovoi-jcs-conformance-vectors`](https://github.com/chopmob-cloud/algovoi-jcs-conformance-vectors).
 
 ## 7. Composition with the x402-foundation/x402 base specification
 
@@ -82,9 +98,9 @@ This extension is additive. Facilitators that do not emit compliance receipts ar
 
 ## 9. Substrate authorship and amendment
 
-This extension is sole AlgoVoi authorship. The categorical verdict enum, the SAMLA s.20 tipping-off discipline, the regulatory mapping, the wire format, and the composition with the AlgoVoi-authored canonicalisation pin are AlgoVoi-authored work. The companion IETF Internet-Draft `draft-hopley-x402-compliance-receipt` is the normative authorship anchor: substrate-author position is established by the I-D, not by this extension document.
+This extension is sole AlgoVoi authorship. The canonical seven-field shape, the categorical verdict enum, the SAMLA s.20 tipping-off discipline, the regulatory mapping, and the composition with the AlgoVoi-authored canonicalisation pin are AlgoVoi-authored work. The companion IETF Internet-Draft `draft-hopley-x402-compliance-receipt` is the normative authorship anchor: substrate-author position is established by the I-D, not by this extension document.
 
-**The categorical enum is closed by design.** Implementations MUST NOT extend the enum in-band. New values MAY be introduced only by a normative successor extension document (`compliance-receipt-v2` or higher) authored by AlgoVoi or with explicit AlgoVoi co-authorship. Republication of the categorical enum, the regulatory mapping, the SAMLA discipline, or any normative element under a different attribution does not constitute substrate authorship of those elements, regardless of the venue or document in which the republication appears.
+**The categorical enum is closed by design.** Implementations MUST NOT extend the enum in-band. New values MAY be introduced only by a normative successor extension document (`compliance-receipt-v2` or higher) authored by AlgoVoi or with explicit AlgoVoi co-authorship. Republication of the canonical shape, the categorical enum, the regulatory mapping, the SAMLA discipline, or any normative element under a different attribution does not constitute substrate authorship of those elements, regardless of the venue or document in which the republication appears.
 
 **Composition direction is fixed.** This extension is the senior artefact in the composition with the x402-foundation/x402 base specification's settlement primitive. References to "composes with" describe technical integration, not co-authorship.
 
@@ -97,6 +113,7 @@ Conformance vectors at [`chopmob-cloud/algovoi-jcs-conformance-vectors`](https:/
 - RFC 8785: JSON Canonicalization Scheme (JCS)
 - [`draft-hopley-x402-compliance-receipt`](https://datatracker.ietf.org/doc/draft-hopley-x402-compliance-receipt/): companion IETF I-D, full normative text, sole AlgoVoi authorship
 - [`draft-hopley-x402-canonicalisation-jcs-v1`](https://datatracker.ietf.org/doc/draft-hopley-x402-canonicalisation-jcs-v1/): canonicalisation pin I-D, sole AlgoVoi authorship
+- [`docs.algovoi.co.uk/compliance-gate-v1`](https://docs.algovoi.co.uk/compliance-gate-v1): canonical specification page (AlgoVoi-controlled)
 - UK SAMLA 2018, Section 20
 - PSD2 / UK Payment Services Regulations 2017
 - MiCA Regulation Article 80
