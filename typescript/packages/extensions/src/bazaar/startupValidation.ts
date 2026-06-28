@@ -31,7 +31,9 @@ const CDP_MAX_DESCRIPTION_LENGTH = 200;
  */
 export function validateResourceInfoLimits(routes: RoutesConfig): void {
   const entries: [string, { description?: string; tags?: string[] }][] =
-    "accepts" in routes ? [["*", routes as { description?: string; tags?: string[] }]] : Object.entries(routes);
+    "accepts" in routes
+      ? [["*", routes as { description?: string; tags?: string[] }]]
+      : Object.entries(routes);
 
   for (const [pattern, config] of entries) {
     if (Array.isArray(config.tags) && config.tags.length > CDP_MAX_TAGS) {
@@ -42,7 +44,10 @@ export function validateResourceInfoLimits(routes: RoutesConfig): void {
           `Trim to ${CDP_MAX_TAGS} or fewer. See: https://github.com/x402-foundation/x402/issues/2679`,
       );
     }
-    if (typeof config.description === "string" && config.description.length > CDP_MAX_DESCRIPTION_LENGTH) {
+    if (
+      typeof config.description === "string" &&
+      config.description.length > CDP_MAX_DESCRIPTION_LENGTH
+    ) {
       console.warn(
         `x402: Route "${pattern}" description is ${config.description.length} characters. ` +
           `The CDP facilitator may reject large ResourceInfo payloads with a generic ` +
