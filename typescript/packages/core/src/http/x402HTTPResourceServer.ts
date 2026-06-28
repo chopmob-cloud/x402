@@ -144,9 +144,24 @@ export interface RouteConfig {
 
   // HTTP-specific metadata
   resource?: string;
+  /**
+   * Human-readable description of this resource.
+   *
+   * Keep concise: the CDP facilitator enforces an undocumented payload-size limit and returns a
+   * generic 400 "invalid paymentPayload" (not a field-specific error) when the combined
+   * ResourceInfo payload is too large. Descriptions over ~200 characters have been observed to
+   * trigger this. See: https://github.com/x402-foundation/x402/issues/2679
+   */
   description?: string;
   mimeType?: string;
   serviceName?: string;
+  /**
+   * Searchable tags for this resource.
+   *
+   * The CDP facilitator silently rejects payloads with more than 8 tags, returning a generic
+   * 400 "invalid paymentPayload" error rather than a tag-count-specific message. Keep to 8 or
+   * fewer. See: https://github.com/x402-foundation/x402/issues/2679
+   */
   tags?: string[];
   iconUrl?: string;
   customPaywallHtml?: string;
