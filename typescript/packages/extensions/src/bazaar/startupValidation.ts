@@ -11,6 +11,48 @@ import { validateDiscoveryExtension, validateDiscoveryExtensionSpec } from "./fa
 
 export { checkIfBazaarNeeded } from "@x402/core/server";
 
+/**
+ * Empirical limits observed for the CDP facilitator (https://github.com/x402-foundation/x402/issues/2679).
+ * The CDP facilitator returns a generic 400 "invalid paymentPayload" when ResourceInfo
+ * fields exceed these values, with no field-specific error message.
+ */
+const CDP_MAX_TAGS = 8;
+const CDP_MAX_DESCRIPTION_LENGTH = 200;
+
+/**
+ * Warn at startup when ResourceInfo fields on a route exceed the empirical CDP
+ * facilitator limits that cause generic 400 "invalid paymentPayload" errors.
+ *
+ * The CDP facilitator does not return a field-specific error when these limits
+ * are exceeded; it returns the same top-level "invalid paymentPayload" pattern
+ * mismatch as any other payload schema error (issue #2679).
+ *
+ * @param routes - Route configuration to check
+ */
+export function validateResourceInfoLimits(routes: RoutesConfig): void {
+  const entries: [string, { description?: string; tags?: string[] }][] =
+    "accepts" in routes ? [["*", routes as { description?: string; tags?: string[] }]] : Object.entries(routes);
+
+  for (const [pattern, config] of entries) {
+    if (Array.isArray(config.tags) && config.tags.length > CDP_MAX_TAGS) {
+      console.warn(
+        `x402: Route "${pattern}" declares ${config.tags.length} tags. ` +
+          `The CDP facilitator silently rejects payloads with more than ${CDP_MAX_TAGS} tags ` +
+          `(returns generic 400 "invalid paymentPayload" — not a tag-count error). ` +
+          `Trim to ${CDP_MAX_TAGS} or fewer. See: https://github.com/x402-foundation/x402/issues/2679`,
+      );
+    }
+    if (typeof config.description === "string" && config.description.length > CDP_MAX_DESCRIPTION_LENGTH) {
+      console.warn(
+        `x402: Route "${pattern}" description is ${config.description.length} characters. ` +
+          `The CDP facilitator may reject large ResourceInfo payloads with a generic ` +
+          `400 "invalid paymentPayload" error. Keep descriptions under ${CDP_MAX_DESCRIPTION_LENGTH} characters. ` +
+          `See: https://github.com/x402-foundation/x402/issues/2679`,
+      );
+    }
+  }
+}
+
 const HTTP_VERB_RE = /^(GET|POST|PUT|PATCH|DELETE|HEAD)\b/i;
 
 /**
