@@ -13,8 +13,14 @@ export { checkIfBazaarNeeded } from "@x402/core/server";
 
 /**
  * Empirical limits observed for the CDP facilitator (https://github.com/x402-foundation/x402/issues/2679).
- * The CDP facilitator returns a generic 400 "invalid paymentPayload" when ResourceInfo
- * fields exceed these values, with no field-specific error message.
+ *
+ * The facilitator behaves like a combined ResourceInfo payload-size budget rather than
+ * two independent caps: exceeding it returns a generic 400 "invalid paymentPayload" with
+ * no field-specific message. Empirically the tag count is the sharper lever: a ~450-char
+ * description can settle on its own, yet the same description paired with 14 tags trips the
+ * limit, and trimming to 8 tags clears it without shortening the description. The values
+ * below are conservative heuristics for being near the budget; tags <= 8 is the most
+ * reliable single fix.
  */
 const CDP_MAX_TAGS = 8;
 const CDP_MAX_DESCRIPTION_LENGTH = 200;
@@ -39,9 +45,10 @@ export function validateResourceInfoLimits(routes: RoutesConfig): void {
     if (Array.isArray(config.tags) && config.tags.length > CDP_MAX_TAGS) {
       console.warn(
         `x402: Route "${pattern}" declares ${config.tags.length} tags. ` +
-          `The CDP facilitator silently rejects payloads with more than ${CDP_MAX_TAGS} tags ` +
-          `(returns generic 400 "invalid paymentPayload" — not a tag-count error). ` +
-          `Trim to ${CDP_MAX_TAGS} or fewer. See: https://github.com/x402-foundation/x402/issues/2679`,
+          `The CDP facilitator silently rejects payloads over its combined ResourceInfo budget ` +
+          `(a generic 400 "invalid paymentPayload", not a tag-count error), and tag count is the ` +
+          `sharpest lever. Trim to ${CDP_MAX_TAGS} or fewer. ` +
+          `See: https://github.com/x402-foundation/x402/issues/2679`,
       );
     }
     if (
@@ -50,8 +57,11 @@ export function validateResourceInfoLimits(routes: RoutesConfig): void {
     ) {
       console.warn(
         `x402: Route "${pattern}" description is ${config.description.length} characters. ` +
-          `The CDP facilitator may reject large ResourceInfo payloads with a generic ` +
-          `400 "invalid paymentPayload" error. Keep descriptions under ${CDP_MAX_DESCRIPTION_LENGTH} characters. ` +
+          `The CDP facilitator enforces a combined ResourceInfo payload budget and may reject ` +
+          `large payloads with a generic 400 "invalid paymentPayload" error. A long description ` +
+          `can settle on its own but is more likely to trip the limit alongside many tags, so ` +
+          `reducing tags to ${CDP_MAX_TAGS} or fewer is the most reliable fix; keeping descriptions ` +
+          `under ${CDP_MAX_DESCRIPTION_LENGTH} characters is a conservative default. ` +
           `See: https://github.com/x402-foundation/x402/issues/2679`,
       );
     }
